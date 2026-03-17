@@ -87,7 +87,12 @@ function VoiceButton({
           const formData = new FormData();
           formData.append("audio", blob, "audio.webm");
           const res = await fetch("/api/transcribe", { method: "POST", body: formData });
-          const data = await res.json();
+          let data: { text?: string; error?: string };
+          try {
+            data = await res.json();
+          } catch {
+            data = { error: res.status === 404 ? "Transcribe API not found. Did you deploy the latest code?" : `Transcription failed (${res.status}).` };
+          }
           if (!res.ok) {
             setErrorAndNotify(data.error || "Transcription failed.");
             return;

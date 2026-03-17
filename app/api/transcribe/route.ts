@@ -26,15 +26,22 @@ export async function POST(request: Request) {
   }
 
   const file = formData.get("audio") ?? formData.get("file");
-  if (!file || !(file instanceof Blob)) {
+  const isBlobLike =
+    file &&
+    typeof (file as Blob).size === "number" &&
+    typeof (file as Blob).arrayBuffer === "function";
+  if (!isBlobLike) {
     return NextResponse.json(
-      { error: "Missing audio file. Send a form field named 'audio' or 'file'." },
+      {
+        error:
+          "Missing or invalid audio file. Expected form field 'audio' or 'file' with a recorded blob.",
+      },
       { status: 400 }
     );
   }
 
   const body = new FormData();
-  body.append("file", file, "audio.webm");
+  body.append("file", file as Blob, "audio.webm");
   body.append("model", "whisper-1");
 
   const lang = formData.get("language");
