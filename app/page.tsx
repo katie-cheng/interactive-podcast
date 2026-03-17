@@ -41,79 +41,86 @@ function useRevealSentences(fullText: string, isActive: boolean) {
 
 function VoiceButton({
   onTranscript,
+  onError,
   disabled,
 }: {
   onTranscript: (text: string) => void;
+  onError?: () => void;
   disabled?: boolean;
 }) {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const transcriptRef = useRef<string[]>([]);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
-  const startRecording = useCallback(() => {
+  const setErrorAndNotify = useCallback((msg: string) => {
+    setError(msg);
+    onError?.();
+  }, [onError]);
+
+  const startRecording = useCallback(async () => {
     if (typeof window === "undefined") return;
     setError(null);
     setTranscript("");
-    transcriptRef.current = [];
-    const SpeechRecognition =
-      (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition ||
-      (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("Speech recognition not supported. Try Chrome or Edge.");
-      return;
-    }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.onresult = (e: SpeechRecognitionEvent) => {
-      const results: string[] = [];
-      for (let i = 0; i < e.results.length; i++) {
-        const result = e.results[i];
-        if (result.isFinal) {
-          results.push(result[0].transcript);
-        }
-      }
-      if (results.length > 0) {
-        transcriptRef.current = [...transcriptRef.current, ...results];
-        setTranscript(transcriptRef.current.join(" "));
-      }
-    };
-    recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
-      const err = e;
-      const msg =
-        err.error === "not-allowed"
-          ? "Microphone access denied. Allow the site to use your mic and try again."
-          : err.error === "no-speech"
-            ? "No speech heard. Click the mic again when you’re ready to stop."
-            :         err.error === "network"
-              ? "Speech recognition needs internet and is often blocked by VPNs or strict networks. Type your response below instead."
-              : `Recognition error: ${err.error}`;
-      setError(msg);
-      setRecording(false);
-    };
-    recognition.onend = () => {
-      const finalText = transcriptRef.current.join(" ").trim();
-      recognitionRef.current = null;
-      setRecording(false);
-      if (finalText) {
-        onTranscript(finalText);
-      }
-    };
-    recognitionRef.current = recognition;
+    chunksRef.current = [];
     try {
-      recognition.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        if (blob.size === 0) {
+          setError("No audio recorded. Try again.");
+          onError?.();
+          setRecording(false);
+          setTranscribing(false);
+          return;
+        }
+        setTranscribing(true);
+        try {
+          const formData = new FormData();
+          formData.append("audio", blob, "audio.webm");
+          const res = await fetch("/api/transcribe", { method: "POST", body: formData });
+          const data = await res.json();
+          if (!res.ok) {
+            setErrorAndNotify(data.error || "Transcription failed.");
+            return;
+          }
+          const text = (data.text || "").trim();
+          if (text) {
+            setTranscript(text);
+            onTranscript(text);
+          } else {
+            setError("Nothing was heard. Try again or type your response below.");
+            onError?.();
+          }
+        } catch (err) {
+          console.error("[transcribe]", err);
+          setErrorAndNotify("Transcription failed. Check your connection or type below.");
+        } finally {
+          setTranscribing(false);
+          setRecording(false);
+        }
+      };
+      recorder.start(1000);
+      mediaRecorderRef.current = recorder;
       setRecording(true);
     } catch (err) {
-      setError("Could not start microphone. Check permissions.");
+      setErrorAndNotify("Microphone access denied. Allow the site to use your mic, or type below.");
     }
-  }, [onTranscript]);
+  }, [onTranscript, onError, setErrorAndNotify]);
 
   const stopRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+      setTranscribing(true);
     }
   }, []);
 
@@ -122,12 +129,12 @@ function VoiceButton({
       <button
         type="button"
         onClick={recording ? stopRecording : startRecording}
-        disabled={disabled}
+        disabled={disabled || transcribing}
         className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-accent bg-transparent text-accent transition-opacity hover:opacity-90 disabled:opacity-50"
         style={{
-          animation: recording ? "pulse 1.5s ease-in-out infinite" : undefined,
+          animation: recording || transcribing ? "pulse 1.5s ease-in-out infinite" : undefined,
         }}
-        aria-label={recording ? "Stop recording" : "Start recording"}
+        aria-label={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Start recording"}
       >
         <svg
           className="h-5 w-5"
@@ -143,7 +150,7 @@ function VoiceButton({
         </svg>
       </button>
       <span className="font-sans text-[11px] uppercase tracking-widest text-annotation">
-        {recording ? "Recording… click again to stop and send" : "Click to start • click again to stop and send"}
+        {transcribing ? "Transcribing…" : recording ? "Recording… click again to stop and send" : "Click to start • click again to stop and send"}
       </span>
       {error ? (
         <p className="font-sans text-sm text-accent max-w-full">{error}</p>
@@ -213,6 +220,7 @@ function ChunkView({
   const [claudeReply, setClaudeReply] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  const [voiceFailed, setVoiceFailed] = useState(false);
 
   const { sentences, visibleCount } = useRevealSentences(
     chunk.transcript,
@@ -327,12 +335,15 @@ function ChunkView({
           <>
             <VoiceButton
               onTranscript={handleVoiceSubmit}
+              onError={() => setVoiceFailed(true)}
               disabled={loading}
             />
-            <TypedResponseFallback
-              onSubmit={handleVoiceSubmit}
-              disabled={loading}
-            />
+            {voiceFailed && (
+              <TypedResponseFallback
+                onSubmit={handleVoiceSubmit}
+                disabled={loading}
+              />
+            )}
             {!claudeReply && !loading && (
               <button
                 type="button"
@@ -394,7 +405,8 @@ export default function Home() {
     return (
       <div className="min-h-screen flex flex-col bg-bg">
         <p className="text-center font-sans text-sm text-annotation/90 max-w-xl mx-auto px-6 pt-12 pb-4">
-          This is a story I previously produced for the Stanford Storytelling Project. I wanted to add a new lens to it — the age of AI — and turn it into something you can talk back to. That this website is an interactive AI podcast is part of the point.
+        <i>Secret Graffiti</i> is a narrative podcast piece about my dad revealing to me that he was a graffiti artist in 1980s San Francisco and left art behind to become an engineer. This interactive annotated podcast analyzes the story through a new lens: what does that story look like now, when AI is changing what it means to make art at all?
+
         </p>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <h1 className="font-serif text-4xl md:text-6xl text-muted tracking-tight text-center">
