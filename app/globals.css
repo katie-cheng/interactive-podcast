@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0c0c0c;
+  --border: #2a2a2a;
+  --muted: #e8e3db;
+  --transcript: #d4cfc8;
+  --accent: #9b4444;
+  --annotation: #a09a94;
+  --claude: #7a9b8a;
+  --btn-border: #3a3a3a;
+  --btn-text: #6a6a6a;
+}
+
+body {
+  background-color: var(--bg);
+}
+
+/* Smooth scroll for two-column sync */
+.column-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Markdown-style content in annotations */
+.markdown-render p {
+  margin-bottom: 0.75em;
+}
+.markdown-render p:last-child {
+  margin-bottom: 0;
+}
+.markdown-render strong {
+  font-weight: 600;
+}
+.markdown-render em {
+  font-style: italic;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Transcript: one sentence at a time with fade-in */
+.transcript-sentence {
+  animation: transcriptReveal 0.45s ease-out forwards;
+}
+
+@keyframes transcriptReveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
